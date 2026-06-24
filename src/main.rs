@@ -1,24 +1,58 @@
 use clap::Parser;
+use crossterm::cursor;
+use crossterm::event;
+use crossterm::execute;
+use crossterm::style::Print;
+use crossterm::terminal;
 use rand::prelude::*;
+use serde::{Deserialize, Serialize};
+use serde_json;
+use sha2::{Digest, Sha512_256};
 use std::fs;
+use std::io;
+use std::process;
+use zeroize::Zeroize;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// Generate a random password and exit.
-    #[arg(short, long, default_value_t = false)]
-    random: bool,
+    /// Path to the word list to use. Defaults to the EFF long word list.
+    #[arg(short, long)]
+    wordlist: Option<String>,
 
-    /// Path to the word list to use.
-    #[arg(short, long, default_value_t = String::from("eff_large_wordlist.txt"))]
-    wordlist: String,
+    /// Name of service to generate the password for. If not provided, generates
+    /// a random password.
+    #[arg(short, long)]
+    account: Option<String>,
+
+    /// Set this flag to generate a new password for a previously generated
+    /// account; it will increment an internal counter. Ignored if account is
+    /// not set or is new.
+    #[arg(short, long, default_value_t = false)]
+    refresh: bool,
+
+    /// Print the "stupid" version of the password. This version is intended to
+    /// accomodate various ill-advised and password-manager hostile reqirements
+    /// such as maximum length, uppercase letters, symbols, and numbers.
+    #[arg(short, long, default_value_t = false)]
+    stupid: bool,
+    // TODO: option to edit notes
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct Account {
+    name: String,
+    counter: u32,
+    notes: String,
 }
 
 // Fetch words deterministically from the word list based on a seed value.
-fn get_words(wordlist: String, seed: &[u8;32]) -> Vec<String> {
+fn get_words(wordlist: Option<String>, seed: &[u8]) -> Vec<String> {
     // Read the word list.
-    let words_string: String = fs::read_to_string(wordlist)
-        .expect("Could not open wordlist!");
+    let words_string = match wordlist {
+        Some(path) => fs::read_to_string(path).expect("Could not open wordlist!"),
+        None => String::from(include_str!("eff_large_wordlist.txt")),
+    };
     let words: Vec<&str> = words_string.lines().collect();
     if words.len() == 0 {
         panic!("Word list is empty!");
@@ -26,7 +60,7 @@ fn get_words(wordlist: String, seed: &[u8;32]) -> Vec<String> {
 
     // Based on the size of the word list, determine how many words we need for
     // a minimum security threshold.
-    let sec_threshold: usize = 64;
+    let sec_threshold: usize = 70;
     let count = sec_threshold.div_ceil(words.len().ilog2() as usize);
 
     // We need to translate the seed into indices into the word list. The seed
@@ -50,7 +84,7 @@ fn get_words(wordlist: String, seed: &[u8;32]) -> Vec<String> {
         let start_byte = start_bit / 8;
         let end_byte = end_bit / 8;
         let bytelen = end_byte - start_byte;
-        let idx_bytes: &mut [u8] = &mut [0u8;8];
+        let idx_bytes: &mut [u8] = &mut [0u8; 8];
         for i in 0..bytelen {
             idx_bytes[i] = seed[start_byte + i];
         }
@@ -61,21 +95,179 @@ fn get_words(wordlist: String, seed: &[u8;32]) -> Vec<String> {
         idxs.push(idx as usize);
     }
 
-    return idxs.into_iter()
+    return idxs
+        .into_iter()
         .map(|i| String::from(*words.get(i).unwrap()))
         .collect();
+}
+
+// Read a password from standard input (without echoing to the terminal).
+fn read_password(prompt: &str) -> String {
+    // Using raw mode allows us to not echo the characters typed.
+    terminal::enable_raw_mode().expect("Could not enable terminal raw mode.");
+    execute!(io::stdout(), Print(format!("{}: ", prompt))).unwrap();
+    let mut password = String::new();
+    loop {
+        match event::read().unwrap() {
+            event::Event::Key(k) => {
+                // Ignore non-press events.
+                if !k.is_press() {
+                    continue;
+                }
+
+                //  If the key was enter, exit the loop.
+                if k.code.is_enter() {
+                    execute!(io::stdout(), Print("\n"), cursor::MoveToNextLine(1)).unwrap();
+                    break;
+                }
+
+                // If the key was ctrl-c, exit the program.
+                if k.code == event::KeyCode::Char('c')
+                    && k.modifiers == event::KeyModifiers::CONTROL
+                {
+                    execute!(io::stdout(), Print("\n"), cursor::MoveToNextLine(1)).unwrap();
+                    terminal::disable_raw_mode().expect("Could not disable terminal raw mode.");
+                    process::exit(1);
+                }
+
+                // If the key was backspace, delete some characters.
+                if k.code == event::KeyCode::Backspace {
+                    if password.len() == 0 {
+                        continue;
+                    }
+                    password.pop();
+                    execute!(
+                        io::stdout(),
+                        cursor::MoveLeft(1),
+                        Print(" "),
+                        cursor::MoveLeft(1)
+                    )
+                    .unwrap();
+                }
+
+                // Otherwise, accept the new character as part of the password
+                // and echo an asterisk character.
+                if let event::KeyCode::Char(c) = k.code {
+                    password.push(c);
+                    execute!(io::stdout(), Print("*")).unwrap();
+                }
+            }
+            _ => (),
+        }
+    }
+    // Disable raw mode again before exiting.
+    terminal::disable_raw_mode().expect("Could not disable terminal raw mode.");
+    return password;
+}
+
+fn get_domain_password() -> String {
+    let password = read_password("Please type the domain password");
+    let mut password_confirm = read_password("Type password again to confirm");
+    if password == password_confirm {
+        password_confirm.zeroize();
+        return password;
+    }
+    println!("Passwords did not match! Please try again.");
+    return get_domain_password();
+}
+
+fn account_path(account_name: &String) -> String {
+    format!("_accounts/{}", account_name)
+}
+
+fn get_account_record(account_name: &String) -> Option<Account> {
+    let path = account_path(account_name);
+    match fs::exists(&path) {
+        Ok(true) => (),
+        _ => return None,
+    }
+    let account_str = fs::read_to_string(&path).expect("Could not read account data.");
+    return serde_json::from_str(account_str.as_str()).expect("Could not read account data");
+}
+
+fn write_account_record(account: &Account) {
+    let path = account_path(&account.name);
+    let account_str = serde_json::to_string(account).expect("Could not serialize account data.");
+    fs::write(&path, account_str).expect("Could not write account data.");
+}
+
+fn print_password(stupid: bool, words: &Vec<String>) {
+    if stupid {
+        let mut password = String::new();
+        for w in words {
+            let mut chars = w.chars();
+            password.push(chars.next().unwrap().to_ascii_uppercase());
+            password.push(chars.next().unwrap());
+            password.push(chars.next().unwrap());
+        }
+        password.push('1');
+        password.push('!');
+        println!("{}", password);
+        password.zeroize();
+    } else {
+        println!("{}", words.join(" "));
+    }
 }
 
 fn main() {
     let args = Args::parse();
 
-    if args.random {
-        let mut rng = rand::rng();
-        let seed: [u8;32] = rng.random();
-        let words = get_words(args.wordlist, &seed);
-        println!("{}", words.join(" "));
+    if let Some(account_name) = args.account {
+        let mut is_new = false;
+        let mut account = match get_account_record(&account_name) {
+            Some(x) => x,
+            None => {
+                println!(
+                    "Creating new account {}. If you mistyped the name, exit with Ctrl-C and try again.",
+                    account_name
+                );
+                is_new = true;
+                Account {
+                    name: account_name,
+                    counter: 0,
+                    notes: String::from(""),
+                }
+            }
+        };
+        if args.refresh {
+            println!(
+                "Updating account counter from {} to {}.",
+                account.counter,
+                account.counter + 1
+            );
+            account.counter += 1;
+        }
+        if account.notes != "" {
+            println!("Notes: {}", account.notes);
+        }
+        let mut domain_password = get_domain_password();
+        let mut seed = Sha512_256::new()
+            .chain_update(account.counter.to_le_bytes())
+            .chain_update(account.name.as_bytes())
+            .chain_update(domain_password.as_bytes())
+            .finalize();
+        let mut words = get_words(args.wordlist, seed.as_slice());
+        domain_password.zeroize();
+        seed.zeroize();
+        print_password(args.stupid, &words);
+        words.zeroize();
+        if is_new {
+            println!("Add notes? (press enter to skip)");
+            io::stdin()
+                .read_line(&mut account.notes)
+                .expect("Could not interpret notes.")
+                .to_string();
+        }
+        if args.refresh || is_new {
+            write_account_record(&account);
+        }
     } else {
-        // TODO
-        println!("Not yet supported.")
+        // No account given; generate a random password.
+        let mut rng = rand::rng();
+        let mut seed: [u8; 32] = rng.random();
+        let mut words = get_words(args.wordlist, &seed);
+        seed.zeroize();
+        print_password(args.stupid, &words);
+        words.zeroize();
     }
 }
