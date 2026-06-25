@@ -26,23 +26,25 @@ the same password again:
 
 ```
 $ topaz -a example.com
-Please type the domain password: ****************************
-Type password again to confirm: **************************** 
+Please type the domain password: ****
+Type password again to confirm: ****
 affront legwork specks overbook unlikable moneybags
 ```
 
 One nice feature of topaz is that this works *even if you enter the password the
-second time on a totally different machine*, no syncing required.
+second time on a totally different machine*, no syncing required. In fact, the
+domain password used above is "test"; if you use that you should get the same
+results. (This is not a good domain password!)
 
 If the service asking you to make a password has stupid requirements like
 maximum length, mixing upper- and lowercase letters, or including numbers and
-symbols, you can pass `--stupid` to get a version of the password that is
+symbols, you can pass `--stupidity` to get a version of the password that is
 designed to meet those requirements.
 
 ```
-$ topaz -a example.com --stupid
-Please type the domain password: ****************************
-Type password again to confirm: **************************** 
+$ topaz -a example.com --stupidity 2
+Please type the domain password: ****
+Type password again to confirm: ****
 AffLegSpeOveUnlMon1! 
 ```
 
@@ -54,6 +56,8 @@ if you want to retrieve them later.
 $ topaz -r
 appease overcook coliseum lapdog unreached reversing
 ```
+
+Run `topaz -h` to see all the options.
 
 ## Design
 

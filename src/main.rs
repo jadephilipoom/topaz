@@ -31,11 +31,12 @@ struct Args {
     #[arg(short, long, default_value_t = false)]
     refresh: bool,
 
-    /// Print the "stupid" version of the password. This version is intended to
-    /// accomodate various ill-advised and password-manager hostile reqirements
-    /// such as maximum length, uppercase letters, symbols, and numbers.
-    #[arg(short, long, default_value_t = false)]
-    stupid: bool,
+    /// Print a more "stupid" version of the password, intended to accomodate
+    /// reqirements such as uppercase letters, symbols, and numbers (level 1)
+    /// and maximum length (level 2). Setting this will overwrite the default
+    /// stupidity level of the password when it is printed next time.
+    #[arg(short, long, default_value_t = 0)]
+    stupidity: usize,
     // TODO: option to edit notes
 }
 
@@ -43,6 +44,7 @@ struct Args {
 struct Account {
     name: String,
     counter: u32,
+    stupidity: usize,
     notes: String,
 }
 
@@ -191,29 +193,66 @@ fn write_account_record(account: &Account) {
     fs::write(&path, account_str).expect("Could not write account data.");
 }
 
-fn print_password(stupid: bool, words: &Vec<String>) {
-    if stupid {
-        let mut password = String::new();
-        for w in words {
-            let mut chars = w.chars();
-            password.push(chars.next().unwrap().to_ascii_uppercase());
-            password.push(chars.next().unwrap());
-            password.push(chars.next().unwrap());
+fn make_stupid_password(length_limit: Option<usize>, words: &Vec<String>) -> String {
+    let mut password = String::new();
+    for w in words {
+        let mut chars = w.chars();
+        password.push(chars.next().unwrap().to_ascii_uppercase());
+        let mut len = 1;
+        while if let Some(lim) = length_limit {
+            len < lim
+        } else {
+            true
+        } {
+            match chars.next() {
+                Some(c) => {
+                    password.push(c);
+                    len += 1;
+                }
+                None => {
+                    break;
+                }
+            };
         }
-        password.push('1');
-        password.push('!');
-        println!("{}", password);
-        password.zeroize();
-    } else {
-        println!("{}", words.join(" "));
+    }
+    password.push('1');
+    password.push('!');
+    return password;
+}
+
+fn print_password(stupid: usize, words: &Vec<String>) {
+    match stupid {
+        0 => {
+            println!("{}", words.join(" "));
+        }
+        1 => {
+            let mut password = make_stupid_password(None, words);
+            println!("{}", password);
+            password.zeroize();
+        }
+        2 => {
+            let mut password = make_stupid_password(Some(3), words);
+            println!("{}", password);
+            password.zeroize();
+        }
+        _ => {
+            // Panic; we should have caught this before.
+            panic!("Stupidity too high!");
+        }
     }
 }
 
 fn main() {
     let args = Args::parse();
 
+    if args.stupidity > 2 {
+        println!("Password formats that stupid are not supported.");
+        process::exit(1);
+    }
+
     if let Some(account_name) = args.account {
         let mut is_new = false;
+        let mut overwrite = false;
         let mut account = match get_account_record(&account_name) {
             Some(x) => x,
             None => {
@@ -225,17 +264,27 @@ fn main() {
                 Account {
                     name: account_name,
                     counter: 0,
+                    stupidity: args.stupidity,
                     notes: String::from(""),
                 }
             }
         };
         if args.refresh {
+            overwrite = true;
             println!(
-                "Updating account counter from {} to {}.",
+                "Account counter will be updated from {} to {}.",
                 account.counter,
                 account.counter + 1
             );
             account.counter += 1;
+        }
+        if args.stupidity != account.stupidity {
+            overwrite = true;
+            println!(
+                "Stupidity level will be updated from {} to {}.",
+                account.stupidity, args.stupidity
+            );
+            account.stupidity = args.stupidity;
         }
         if account.notes != "" {
             println!("Notes: {}", account.notes);
@@ -249,7 +298,7 @@ fn main() {
         let mut words = get_words(args.wordlist, seed.as_slice());
         domain_password.zeroize();
         seed.zeroize();
-        print_password(args.stupid, &words);
+        print_password(args.stupidity, &words);
         words.zeroize();
         if is_new {
             println!("Add notes? (press enter to skip)");
@@ -259,7 +308,7 @@ fn main() {
                 .to_string();
             account.notes = account.notes.trim_end().to_string();
         }
-        if args.refresh || is_new {
+        if overwrite || is_new {
             write_account_record(&account);
         }
     } else {
@@ -268,7 +317,7 @@ fn main() {
         let mut seed: [u8; 32] = rng.random();
         let mut words = get_words(args.wordlist, &seed);
         seed.zeroize();
-        print_password(args.stupid, &words);
+        print_password(args.stupidity, &words);
         words.zeroize();
     }
 }
