@@ -26,10 +26,16 @@ struct Args {
     account: Option<String>,
 
     /// Set this flag to generate a new password for a previously generated
-    /// account; it will increment an internal counter. Ignored if account is
-    /// not set or is new.
+    /// account; it will increment the account's counter. Ignored if account is
+    /// not set or is new, or if --counter is given.
     #[arg(short, long, default_value_t = false)]
     refresh: bool,
+
+    /// Forces the counter value for the account and saves the new value for use
+    /// next time (use if, for instance, you have refreshed the password one or
+    /// more times on another device). Ignored if account is not set.
+    #[arg(short, long)]
+    counter: Option<u32>,
 
     /// Print a more "stupid" version of the password, intended to accomodate
     /// reqirements such as uppercase letters, symbols, and numbers (level 1)
@@ -269,7 +275,14 @@ fn main() {
                 }
             }
         };
-        if args.refresh {
+        if let Some(ctr) = args.counter {
+            overwrite = true;
+            println!(
+                "Account counter will be updated from {} to {}.",
+                account.counter, ctr
+            );
+            account.counter = ctr;
+        } else if args.refresh {
             overwrite = true;
             println!(
                 "Account counter will be updated from {} to {}.",
