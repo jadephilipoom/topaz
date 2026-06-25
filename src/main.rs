@@ -257,6 +257,7 @@ fn main() {
                 .read_line(&mut account.notes)
                 .expect("Could not interpret notes.")
                 .to_string();
+            account.notes = account.notes.trim_end().to_string();
         }
         if args.refresh || is_new {
             write_account_record(&account);
