@@ -16,33 +16,31 @@ use zeroize::Zeroize;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// Path to the word list to use. Defaults to the EFF long word list.
-    #[arg(short, long)]
-    wordlist: Option<String>,
-
-    /// Name of service to generate the password for. If not provided, generates
-    /// a random password.
+    /// Account name; password is random if not provided.
     #[arg(short, long)]
     account: Option<String>,
 
-    /// Set this flag to generate a new password for a previously generated
-    /// account; it will increment the account's counter. Ignored if account is
-    /// not set or is new, or if --counter is given.
-    #[arg(short, long, default_value_t = false)]
+    /// Adjust for requirements like symbols
+    #[arg(short, long, default_value_t = 0,
+        long_help="Intended to accomodate reqirements such as uppercase letters, symbols,
+and numbers (level 1) and maximum length (level 2). Overwrites the
+default stupidity level of the password when it is printed next time.")]
+    stupidity: usize,
+
+    /// Increment account counter to generate a fresh password
+    #[arg(short, long, default_value_t = false,
+        long_help="Persistently increments the counter for an account to get a new
+password. Ignored if --account is not set or if --counter is set")]
     refresh: bool,
 
-    /// Forces the counter value for the account and saves the new value for use
-    /// next time (use if, for instance, you have refreshed the password one or
-    /// more times on another device). Ignored if account is not set.
+    /// Persistently set a counter value for the account
     #[arg(short, long)]
     counter: Option<u32>,
 
-    /// Print a more "stupid" version of the password, intended to accomodate
-    /// reqirements such as uppercase letters, symbols, and numbers (level 1)
-    /// and maximum length (level 2). Setting this will overwrite the default
-    /// stupidity level of the password when it is printed next time.
-    #[arg(short, long, default_value_t = 0)]
-    stupidity: usize,
+    /// Path to alternative word list for password selection
+    #[arg(short, long)]
+    wordlist: Option<String>,
+
     // TODO: option to edit notes
 }
 

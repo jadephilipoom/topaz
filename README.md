@@ -48,16 +48,16 @@ Type password again to confirm: ****
 AffLegSpeOveUnlMon1! 
 ```
 
-You can also generate completely random passwords with `-r`. Topaz will not
-remember these, so you need to write them down or store them somewhere yourself
-if you want to retrieve them later.
+You can also generate completely random passwords by not giving an account name.
+Topaz will not remember these, so you need to write them down or store them
+somewhere yourself if you want to retrieve them later.
 
 ```
-$ topaz -r
+$ topaz
 appease overcook coliseum lapdog unreached reversing
 ```
 
-Run `topaz -h` to see all the options.
+Run `topaz --help` to see all the options.
 
 ## Design
 
